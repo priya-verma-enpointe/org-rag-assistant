@@ -1,8 +1,16 @@
 fastapi
+alembic
 uvicorn
 sqlalchemy
-chromadb
+pgvector
+psycopg2-binary
+asyncpg
+pypdf
+langchain-text-splitters
 openai
 python-dotenv
 pydantic
+pydantic-settings
 python-multipart
+google-genai
+python-docx

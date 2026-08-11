@@ -9,7 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Requirements install karein
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+#RUN pip install --default-timeout=1000 --no-cache-dir --no-deps-check -r requirements.txt
+RUN pip install --no-cache-dir --default-timeout=1000 --index-url https://pypi.org/simple -r requirements.txt
 
 # Application code copy karein
 COPY . .

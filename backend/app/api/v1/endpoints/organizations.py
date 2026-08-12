@@ -57,7 +57,7 @@ async def update_organization(
     return org
 
 
-@router.delete("/{organization_id}", status_code=status.HTTP_204_NO_CONTENT)
+'''@router.delete("/{organization_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_organization(
     organization_id: int,
     db: AsyncSession = Depends(get_db)
@@ -69,4 +69,31 @@ async def delete_organization(
     
     await db.delete(org)
     await db.commit()
-    return None
+    return None'''
+
+@router.delete("/{organization_id}", status_code=status.HTTP_200_OK)
+async def delete_organization(
+    organization_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    # 1. Fetch organization
+    result = await db.execute(select(Organization).filter(Organization.id == organization_id))
+    org = result.scalars().first()
+    
+    if not org:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Organization not found"
+        )
+    
+    org_name = org.name  
+
+    
+    await db.delete(org)
+    await db.commit()
+    
+    # 3. Explicit JSON Response
+    return {
+        "status": "success",
+        "message": f"Organization '{org_name}' (ID: {organization_id}) and all associated documents have been successfully deleted."
+    }

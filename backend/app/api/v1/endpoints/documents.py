@@ -131,7 +131,7 @@ async def update_document(
     return document
 
 
-@router.delete("/{organization_id}/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+'''@router.delete("/{organization_id}/documents/{document_id}",status_code=status.HTTP_200_OK)
 async def delete_document(
     organization_id: int,
     document_id: int,
@@ -154,3 +154,42 @@ async def delete_document(
     await db.delete(document)
     await db.commit()
     return None
+
+    return {
+        "status": "success",
+        "message": f"Document '{file_name}' (ID: {document_id}) has been successfully deleted."
+    }'''
+
+@router.delete("/{organization_id}/documents/{document_id}", status_code=status.HTTP_200_OK)
+async def delete_document(
+    organization_id: int,
+    document_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    # Check if organization exists
+    org_result = await db.execute(select(Organization).filter(Organization.id == organization_id))
+    org = org_result.scalars().first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    # Fetch document
+    result = await db.execute(
+        select(Document)
+        .filter(Document.id == document_id, Document.organization_id == organization_id)
+    )
+    document = result.scalars().first()
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    
+    file_name = document.file_name
+
+    # Delete document from DB
+    await db.delete(document)
+    await db.commit()
+
+    
+    return {
+        "status": "success",
+        "message": f"Document '{file_name}' (ID: {document_id}) has been successfully deleted."
+    }

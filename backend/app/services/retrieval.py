@@ -80,37 +80,103 @@ async def search_relevant_chunks(
     query: str,
     organization_id: int,
     document_ids: list[int] = None,
-    top_k: int = 4
+    top_k: int = 4,
+    search_type: str = "hybrid"
 ):
     """
-    Searches PostgreSQL pgvector with strict organization_id isolation and optional document filtering
+    Searches PostgreSQL pgvector and FTS with strict organization_id isolation and optional document filtering,
+    combining results using Reciprocal Rank Fusion (RRF).
     """
     query_vector = await get_embedding(query)
 
-    query_str = """
-        SELECT d.file_name, c.page_number, c.chunk_content,
-               1 - (c.embedding <=> CAST(:vector AS vector)) AS similarity
-        FROM document_chunks c
-        JOIN documents d ON c.document_id = d.id
-        WHERE c.organization_id = :org_id 
-          AND 1 - (c.embedding <=> CAST(:vector AS vector)) >= 0.5
-    """
+    # Check if query contains alphanumeric characters for keyword search
+    has_keywords = bool(re.search(r"\w", query)) if query else False
+
+    # Fallback to pure vector search if not hybrid, or if there are no search keywords
+    if search_type != "hybrid" or not has_keywords:
+        query_str = """
+            SELECT d.file_name, c.page_number, c.chunk_content,
+                   1 - (c.embedding <=> CAST(:vector AS vector)) AS similarity
+            FROM document_chunks c
+            JOIN documents d ON c.document_id = d.id
+            WHERE c.organization_id = :org_id 
+              AND 1 - (c.embedding <=> CAST(:vector AS vector)) >= 0.5
+        """
+        
+        params = {
+            "vector": str(query_vector),
+            "org_id": organization_id,
+            "top_k": top_k
+        }
+
+        if document_ids:
+            query_str += " AND c.document_id = ANY(:doc_ids)"
+            params["doc_ids"] = list(document_ids)
+
+        query_str += """
+            ORDER BY similarity DESC
+            LIMIT :top_k
+        """
+
+        sql_query = text(query_str)
+        result = await db.execute(sql_query, params)
+        return result.fetchall()
+
+    # Hybrid Search using Reciprocal Rank Fusion (RRF)
+    vector_filter = "c.organization_id = :org_id"
+    keyword_filter = "c.organization_id = :org_id"
     
     params = {
         "vector": str(query_vector),
+        "query": query,
         "org_id": organization_id,
         "top_k": top_k
     }
 
     if document_ids:
-        query_str += " AND c.document_id = ANY(:doc_ids)"
+        vector_filter += " AND c.document_id = ANY(:doc_ids)"
+        keyword_filter += " AND c.document_id = ANY(:doc_ids)"
         params["doc_ids"] = list(document_ids)
 
-    query_str += """
-        ORDER BY similarity DESC
+    hybrid_query_str = f"""
+        WITH vector_matches AS (
+            SELECT c.id,
+                   c.chunk_content,
+                   c.page_number,
+                   d.file_name,
+                   1 - (c.embedding <=> CAST(:vector AS vector)) AS similarity,
+                   ROW_NUMBER() OVER (ORDER BY c.embedding <=> CAST(:vector AS vector)) AS rank
+            FROM document_chunks c
+            JOIN documents d ON c.document_id = d.id
+            WHERE {vector_filter}
+        ),
+        keyword_matches AS (
+            SELECT c.id,
+                   c.chunk_content,
+                   c.page_number,
+                   d.file_name,
+                   ts_rank_cd(to_tsvector('english', c.chunk_content), plainto_tsquery('english', :query)) AS keyword_score,
+                   ROW_NUMBER() OVER (
+                       ORDER BY ts_rank_cd(to_tsvector('english', c.chunk_content), plainto_tsquery('english', :query)) DESC
+                   ) AS rank
+            FROM document_chunks c
+            JOIN documents d ON c.document_id = d.id
+            WHERE {keyword_filter}
+              AND to_tsvector('english', c.chunk_content) @@ plainto_tsquery('english', :query)
+        )
+        SELECT 
+            COALESCE(v.file_name, k.file_name) AS file_name,
+            COALESCE(v.page_number, k.page_number) AS page_number,
+            COALESCE(v.chunk_content, k.chunk_content) AS chunk_content,
+            COALESCE(v.similarity, 0.0) AS similarity,
+            COALESCE(k.keyword_score, 0.0) AS keyword_score,
+            (COALESCE(1.0 / (60 + v.rank), 0.0) + COALESCE(1.0 / (60 + k.rank), 0.0)) AS rrf_score
+        FROM vector_matches v
+        FULL OUTER JOIN keyword_matches k ON v.id = k.id
+        ORDER BY rrf_score DESC
         LIMIT :top_k
     """
 
-    sql_query = text(query_str)
+    sql_query = text(hybrid_query_str)
     result = await db.execute(sql_query, params)
     return result.fetchall()

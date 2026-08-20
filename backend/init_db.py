@@ -1,6 +1,6 @@
 import asyncio
 from sqlalchemy import text
-from app.database import engine, Base
+from app.db.session import engine, Base
 # Import models so they are registered on Base.metadata
 from app.models import Organization, Document, DocumentChunk, ChatHistory
 

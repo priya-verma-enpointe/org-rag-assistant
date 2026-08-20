@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from google import genai 
-from app.config import settings
+from app.core.config import settings
 
 from google.genai import types
 
@@ -57,21 +57,30 @@ async def get_embedding(text_input: str) -> list[float]:
     return response.embeddings[0].values
 
 async def get_embeddings_batch(texts: list[str], batch_size: int = 50) -> list[list[float]]:
-    """Generates vector embeddings for a list of input texts in batches using Gemini"""
+    """Generates vector embeddings for a list of input texts in batches using Gemini in parallel"""
     if not texts:
         return []
     
+    sem = asyncio.Semaphore(5)
+    
+    async def get_batch_embedding(batch_texts: list[str]) -> list[list[float]]:
+        async with sem:
+            contents = [
+                types.Content(parts=[types.Part.from_text(text=txt)])
+                for txt in batch_texts
+            ]
+            response = await embed_with_retry(contents)
+            return [emb.values for emb in response.embeddings]
+
+    batches = [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
+    tasks = [get_batch_embedding(batch) for batch in batches]
+    
+    results = await asyncio.gather(*tasks)
+    
     all_embeddings = []
-    for i in range(0, len(texts), batch_size):
-        batch_texts = texts[i : i + batch_size]
-        contents = [
-            types.Content(parts=[types.Part.from_text(text=txt)])
-            for txt in batch_texts
-        ]
-        response = await embed_with_retry(contents)
-        for emb in response.embeddings:
-            all_embeddings.append(emb.values)
-            
+    for batch_embs in results:
+        all_embeddings.extend(batch_embs)
+        
     return all_embeddings
 
 

@@ -1,4 +1,4 @@
-from app.database import Base
+from app.db.session import Base
 from app.models.organization import Organization
 from app.models.document import Document, DocumentChunk
 from app.models.chat import ChatHistory

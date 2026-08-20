@@ -16,7 +16,7 @@ class SourceCitation(BaseModel):
 # Exact Response structure for POST /chat
 class ChatResponse(BaseModel):
     answer: str
-    #sources: List[SourceCitation]
+    sources: List[SourceCitation] = []
     selectedDocumentIds: Optional[List[int]] = None
 
 class ChatHistoryResponse(BaseModel):
